@@ -1,0 +1,36 @@
+<h2 class="main__titulo">Painel de Grupos</h2>
+<div class="main__container">
+  <div class="main__table__left">
+    <h2 class="main__titulo">Meus Grupos</h2>
+    <p class="main__selection">Os grupos são listados a cada nova mensagem</p>
+    <table>
+      <thead>
+        <tr>
+          <th>ID Grupo</th>
+          <th>Nome Grupo</th>
+          <th>Incluir</th>
+        </tr>
+      </thead>
+      <tbody id="tabela_grupos_esquerda">
+        <!-- Preenchido dinamicamente pelo JS -->
+      </tbody>
+    </table>
+  </div>
+  <div class="main__table__right">
+    <h2 class="main__titulo">Grupos incluídos</h2>
+    <p class="main__selection">Clique no botão confirmar abaixo da lista</p>
+    <table>
+      <thead>
+        <tr>
+          <th>ID Grupo</th>
+          <th>Nome Grupo</th>
+        </tr>
+      </thead>
+      <tbody id="tabela_grupos_direita">
+        <!-- Preenchido dinamicamente pelo JS -->
+      </tbody>
+    </table>
+    <button class="main__button" id="confirmar_grupos">Confirmar</button>
+    <label class="main__selection" id="status_grupos"></label>
+  </div>
+</div>

@@ -1,0 +1,49 @@
+<h2 class="main__titulo">Painel de Criação dos Anúncios</h2>
+<div class="main__container">
+    <div class="main__uploads__container">
+  <div class="main__selection__container">
+    <label for="diaSemana" class="main__selection">Selecione o dia da semana:</label>
+    <select id="diaSemana" name="diaSemana" class="main__ficheiro">
+    <option value="segunda">Segunda-feira</option>
+    <option value="terca">Terça-feira</option>
+    <option value="quarta">Quarta-feira</option>
+    <option value="quinta">Quinta-feira</option>
+    <option value="sexta">Sexta-feira</option>
+    <option value="sabado">Sábado</option>
+  </select>
+  </div>
+  <p class="main__selection">Selecione o arquivo para carregar</p>
+  <div id="uploadArquivos" class="main__selection__container">
+  <input type="file" id="file-input" />
+  <button class="main__button" id="upload-button">Upload</button>
+  </div>
+  <p class="main__selection" id="status_documents"></p>
+
+  <div class="main__selection__textarea">
+  <textarea class="main__textarea" type="text" id="input_text" placeholder="Digite o texto aqui... Para negrito adicione o simbolo (*) antes e depois do trecho. Itálico adicione o simbolo (_) antes e depois do trecho." rows="5" cols="40"></textarea>
+  <div class="buttons__textarea">
+  <button class="main__button" type="button" id="emoji-button">😊</button>
+  <div id="emoji-picker" style="display:none; border:1px solid #ccc; padding:10px; max-width:200px; height: 60px; overflow-y: scroll; background:rgba(8, 198, 245, 0.849); position:absolute;"></div>
+  <button class= "main__button" id="upload_text">Enviar Texto</button>
+  </div>
+  </div>
+  <p class="main__selection" id="status_text"></p>
+  </div>
+
+  <div class="main__generator__links">
+    <p class="main__selection">Mini Gerador de Links Whatsapp</p>
+    <p class="main__selection">Seu número de Whatsapp</p>
+    <input class="input__generator" type="phone" id="input_gen_number" placeholder="5511999999999">
+    <p class="main__selection">Seu texto</p>
+    <input class="input__generator" type="text" id="input_gen_text" placeholder="Digite o texto aqui...">
+    <button class="main__button" id="gerar_link">Gerar Link</button>
+    <p class="main__selection">Copie o link abaixo 👇</p>
+    <label id="status_link">
+  </div>
+
+  <div class="main__preview" id="amostra">
+    <p class="main__selection">Prévia</p>
+    <img id="previewImagem" class="main__preview__imagem">
+    <p class="main__selection" id="previewText"></p>
+  </div>
+</div>

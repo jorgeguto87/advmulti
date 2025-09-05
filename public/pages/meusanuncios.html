@@ -1,0 +1,67 @@
+<h2 class="main__titulo">Painel de Anúncios Cadastrados</h2>
+<div class="main__container">
+    <div class="main__grupos">
+        <h2 class="main__titulo">Grupos Anunciados</h2>
+        <table>
+      <thead>
+        <tr>
+          <th>ID Grupo</th>
+          <th>Nome Grupo</th>
+        </tr>
+      </thead>
+      <tbody id="tabela_grupos_check">
+        <!-- Preenchido dinamicamente pelo JS -->
+      </tbody>
+    </table>
+    </div>
+    <div class="main__anuncios">
+    <h2 class="main__titulo">Anúncios Cadastrados</h2>
+    <label for="diaSemana_chk" class="main__selection">Selecione o dia da semana:</label>
+    <select id="diaSemana_chk" name="diaSemana" class="main__ficheiro">
+    <option value="segunda">Segunda-feira</option>
+    <option value="terca">Terça-feira</option>
+    <option value="quarta">Quarta-feira</option>
+    <option value="quinta">Quinta-feira</option>
+    <option value="sexta">Sexta-feira</option>
+    <option value="sabado">Sábado</option>
+  </select>
+  <div class="main__selection__btns">
+  <button class="main__button" id="btn-apagar-anuncio">Apagar Dia</button>
+  <button class="main__button" id="btn-apagar-todos">Apagar Todos</button>
+  </div>
+  <p class="main__selection">Deseja utilizar este anúncio em outros dias?</p>
+  <div class="main__selection__checkbox">
+    <div class="checkbox__selection">
+  <input type="checkbox" id="checkbox_segunda" class="main__checkbox">
+  <label for="checkbox" class="main__selection">Segunda-Feira</label>
+    </div>
+    <div class="checkbox__selection">
+  <input type="checkbox" id="checkbox_terca" class="main__checkbox">
+  <label for="checkbox" class="main__selection">Terça-Feira</label>
+    </div>
+    <div class="checkbox__selection">
+  <input type="checkbox" id="checkbox_quarta" class="main__checkbox">
+  <label for="checkbox" class="main__selection">Quarta-Feira</label>
+    </div>
+    <div class="checkbox__selection">
+  <input type="checkbox" id="checkbox_quinta" class="main__checkbox">
+  <label for="checkbox" class="main__selection">Quinta-Feira</label>
+    </div>
+    <div class="checkbox__selection">
+  <input type="checkbox" id="checkbox_sexta" class="main__checkbox">
+  <label for="checkbox" class="main__selection">Sexta-Feira</label>
+    </div>
+    <div class="checkbox__selection">
+  <input type="checkbox" id="checkbox_sabado" class="main__checkbox">
+  <label for="checkbox" class="main__selection">Sábado</label>
+    </div>
+  <button class="main__button" id="confirmar_checkbox">Confirmar</button>
+  <label class="main__selection" id="status_checkbox"></label>
+  </div>
+  </div>
+  <div class="main__preview" id="amostra_chk">
+    <p class="main__selection">Prévia</p>
+    <img id="previewImagem_chk" class="main__preview__imagem">
+    <p class="main__selection" id="previewText_chk"></p>
+  </div>
+</div>
