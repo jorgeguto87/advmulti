@@ -1330,34 +1330,31 @@ if (window.location.href.includes('horarios') || document.querySelector('main').
 }
 }
 
+// === Aba Grupos ===
 if (document.getElementById('confirmar_grupos')) {
   const tabelaEsquerda = document.getElementById('tabela_grupos_esquerda');
   const tabelaDireita = document.getElementById('tabela_grupos_direita');
   const btnConfirmarGrupos = document.getElementById('confirmar_grupos');
+  const status = document.getElementById('status_grupos');
 
-  // Limpa quaisquer linhas existentes
   tabelaEsquerda.innerHTML = '';
   tabelaDireita.innerHTML = '';
 
-  // Busca os grupos do backend
-  fetch('https://atentus.com.br:5000/grupos')
+  const idSession = loginUsuario; // ou sessionStorage.getItem('userId')
+
+  // === Carregar grupos scan (esquerda) ===
+  fetch(`https://atentus.com.br:5000/grupos/${idSession}`)
     .then(res => res.json())
     .then(grupos => {
+      tabelaEsquerda.innerHTML = '';
       grupos.forEach(grupo => {
         const tr = document.createElement('tr');
 
-        let idParte = grupo.id;
-        let nomeParte = '';
-
-        if (grupo.id.includes(' - ')) {
-        [idParte, nomeParte] = grupo.id.split(' - ');
-        }
-
         const tdId = document.createElement('td');
-        tdId.textContent = idParte;
+        tdId.textContent = grupo.id;
 
         const tdNome = document.createElement('td');
-        tdNome.textContent = nomeParte;
+        tdNome.textContent = grupo.nome;
 
         const tdCheck = document.createElement('td');
         const checkbox = document.createElement('input');
@@ -1371,11 +1368,11 @@ if (document.getElementById('confirmar_grupos')) {
         tr.appendChild(tdCheck);
 
         tabelaEsquerda.appendChild(tr);
-        
-        //setInterval(tr, 3000);
       });
-    });
+    })
+    .catch(err => console.error('Erro ao carregar grupos scan:', err));
 
+  // === Atualizar tabela da direita (grupos incluídos) ===
   function atualizarGruposSelecionados() {
     tabelaDireita.innerHTML = '';
 
@@ -1399,58 +1396,143 @@ if (document.getElementById('confirmar_grupos')) {
     });
   }
 
+  // === Confirmar inclusão no banco ===
   btnConfirmarGrupos.addEventListener('click', () => {
     const linhasSelecionadas = tabelaDireita.querySelectorAll('tr');
-    const status = document.getElementById('status_grupos');
     const gruposSelecionados = Array.from(linhasSelecionadas).map(tr => ({
-      id: tr.children[0].textContent,
-      nome: tr.children[1].textContent
+      TOKEN: idSession,
+      ID_GROUP: tr.children[0].textContent,
+      NOME: tr.children[1].textContent
     }));
 
-    fetch('https://atentus.com.br:5000/grupos', {
+    if (gruposSelecionados.length === 0) {
+      Swal.fire('Aviso', 'Nenhum grupo selecionado para incluir', 'warning');
+      return;
+    }
+
+    fetch(`https://atentus.com.br:5000/gruposcheck/${idSession}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(gruposSelecionados)
     })
       .then(res => res.json())
       .then(data => {
-        //alert(data.message);
-        status.textContent = data.message;
+        Swal.fire('Sucesso', 'Grupos confirmados com sucesso!', 'success');
+        status.textContent = data.message || 'Grupos salvos';
+        
+        // Limpar tabela da direita após confirmar
+        tabelaDireita.innerHTML = '';
+        
+        // Desmarcar checkboxes da esquerda
+        const checkboxes = tabelaEsquerda.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(cb => cb.checked = false);
       })
       .catch(err => {
-        //alert('Erro ao salvar os grupos');
-        status.textContent = 'Erro ao salvar os grupos';
+        Swal.fire('Erro', 'Erro ao salvar os grupos', 'error');
         console.error(err);
       });
+    console.log(gruposSelecionados);
   });
 }
 
-//meusanuncios
+// === Aba Meus Anúncios ===
 if (document.getElementById('tabela_grupos_check')) {
-  fetch('https://atentus.com.br:5000/gruposcheck')
-    .then(res => res.json())
-    .then(grupos => {
-      const tbody = document.getElementById('tabela_grupos_check');
-      tbody.innerHTML = ''; // limpa antes de preencher (opcional)
+  const tbody = document.getElementById('tabela_grupos_check');
+  const btnApagarSelecionados = document.getElementById('btn_apagar_grupos');
+  const btnApagarTodos = document.getElementById('btn_apagar_todos_grupos');
+  const idSession = loginUsuario;
 
-      grupos.forEach(grupo => {
-        const tr = document.createElement('tr');
+  carregarGruposCheck();
 
-        const tdId = document.createElement('td');
-        tdId.textContent = grupo.id;
+  function carregarGruposCheck() {
+    fetch(`https://atentus.com.br:5000/gruposcheck/${idSession}`)
+      .then(res => res.json())
+      .then(grupos => {
+        tbody.innerHTML = '';
+        grupos.forEach(grupo => {
+          const tr = document.createElement('tr');
 
-        const tdNome = document.createElement('td');
-        tdNome.textContent = grupo.nome;
+          const tdId = document.createElement('td');
+          tdId.textContent = grupo.id;
 
-        tr.appendChild(tdId);
-        tr.appendChild(tdNome);
+          const tdNome = document.createElement('td');
+          tdNome.textContent = grupo.nome;
 
-        tbody.appendChild(tr);
+          // ✅ NOVA COLUNA: Checkbox para seleção
+          const tdCheck = document.createElement('td');
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.dataset.id = grupo.id; // Para identificar o grupo
+          tdCheck.appendChild(checkbox);
+
+          tr.appendChild(tdId);
+          tr.appendChild(tdNome);
+          tr.appendChild(tdCheck); // ✅ Adicionar coluna checkbox
+
+          tbody.appendChild(tr);
+        });
+      })
+      .catch(error => {
+        console.error('Erro ao carregar os gruposcheck:', error);
       });
-    })
-    .catch(error => {
-      console.error('Erro ao carregar os grupos:', error);
+  }
+
+  // === Apagar selecionados ===
+  btnApagarSelecionados.addEventListener('click', async () => {
+    const selecionados = tbody.querySelectorAll('input[type="checkbox"]:checked');
+    if (selecionados.length === 0) {
+      Swal.fire('Aviso', 'Selecione pelo menos um grupo para apagar', 'warning');
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: 'Tem certeza?',
+      text: `Você vai apagar ${selecionados.length} grupo(s) incluído(s).`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Sim, apagar',
+      cancelButtonText: 'Cancelar'
     });
+
+    if (!confirm.isConfirmed) return;
+
+    for (const chk of selecionados) {
+      const id = chk.dataset.id;
+      try {
+        await fetch(`https://atentus.com.br:5000/gruposcheck/${idSession}/${id}`, { method: 'DELETE' });
+      } catch (err) {
+        console.error(`Erro ao apagar grupo ${id}:`, err);
+      }
+    }
+
+    Swal.fire('Sucesso', 'Grupos selecionados apagados!', 'success');
+    carregarGruposCheck(); // ✅ Recarregar tabela
+  });
+
+  // === Apagar todos ===
+  btnApagarTodos.addEventListener('click', async () => {
+    const linhas = tbody.querySelectorAll('tr');
+    if (linhas.length === 0) {
+      Swal.fire('Aviso', 'Nenhum grupo incluído para apagar', 'warning');
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: 'Tem certeza?',
+      text: 'Todos os grupos incluídos serão apagados!',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Sim, apagar todos',
+      cancelButtonText: 'Cancelar'
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    await fetch(`https://atentus.com.br:5000/gruposcheck/${idSession}`, { method: 'DELETE' });
+
+    Swal.fire('Sucesso', 'Todos os grupos foram apagados!', 'success');
+    carregarGruposCheck(); // ✅ Recarregar tabela
+  });
 }
 
 // preview front

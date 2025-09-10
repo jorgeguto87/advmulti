@@ -8,26 +8,30 @@
   "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node ."
+    "start": "node .",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "archiver": "^7.0.1",
     "axios": "^1.10.0",
     "bcryptjs": "^3.0.2",
-    "child_process": "^1.0.2",
+    "bson": "^6.8.0",
     "cors": "^2.8.5",
-    "express": "^5.1.0",
-    "fs": "^0.0.1-security",
+    "express": "^4.21.2",
     "fs-extra": "^11.3.1",
-    "gridfs-stream": "^1.1.1",
-    "mongodb": "^6.19.0",
-    "mongoose": "^8.18.0",
+    "mongodb": "^6.1.0",
+    "mongoose": "^8.0.4",
     "multer": "^2.0.1",
     "node-cron": "^4.1.0",
-    "path": "^0.12.7",
     "qrcode": "^1.5.4",
     "sharp": "^0.34.3",
     "unzipper": "^0.12.3",
-    "whatsapp-web.js": "^1.33.0"
+    "whatsapp-web.js": "^1.26.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
