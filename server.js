@@ -465,11 +465,34 @@ async function comprimirLocalmente(imagemBuffer, qualidade = 0.7, larguraMaxima 
     }
 }
 
-//***** AGENDAR ENVIOS NOVO COM TIMEZONE *****
+//***** AGENDAR ENVIOS NOVO COM TIMEZONE (ajustado) *****
+
+// Configuração do fuso horário
+//***** AGENDAR ENVIOS NOVO COM TIMEZONE + CACHE TTL *****
 
 // Configuração do fuso horário
 const TIMEZONE_OFFSET = -3; // UTC-3 (Brasil) - ajuste conforme necessário
 const TARGET_TIMEZONE = 'America/Sao_Paulo'; // Timezone do Brasil
+
+// Cache com TTL curto
+const NodeCache = require("node-cache");
+const cacheHorarios = new NodeCache({ stdTTL: 60, checkperiod: 30 });  // 1 min
+const cacheMensagem = new NodeCache({ stdTTL: 30, checkperiod: 15 }); // 30s
+const cacheGrupos = new NodeCache({ stdTTL: 30, checkperiod: 15 });   // 30s
+
+async function fetchWithCache(url, options = {}, cache, cacheKey) {
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    console.log(`⚡ Cache HIT: ${cacheKey}`);
+    return cached;
+  }
+  console.log(`🌐 Cache MISS: ${cacheKey}`);
+  const res = await fetch(url, options);
+  if (!res.ok) throw new Error(`Erro API: ${res.status}`);
+  const data = await res.json();
+  cache.set(cacheKey, data);
+  return data;
+}
 
 // Função para obter data/hora no timezone correto
 function obterDataBrasil() {
@@ -480,7 +503,7 @@ function obterDataBrasil() {
 function obterHoraBrasil() {
   const agora = new Date();
   const horaUTC = agora.getUTCHours();
-  const horaBrasil = (horaUTC + TIMEZONE_OFFSET + 24) % 24; // +24 para evitar negativo
+  const horaBrasil = (horaUTC + TIMEZONE_OFFSET + 24) % 24;
   return horaBrasil;
 }
 
@@ -492,398 +515,219 @@ function obterDiaBrasil() {
 
 async function agendarEnvios() {
   console.log('📅 Função de agendamento registrada (baseada em tokens do banco) - Timezone Brasil');
-  const enviadosHoje = new Map(); // token -> Set() para controlar envios por token
+  const enviadosHoje = new Map();
 
-  // Zerar controle à meia-noite NO HORÁRIO DO BRASIL
-  cron.schedule('0 3 * * *', () => { // 3h UTC = 0h Brasil (UTC-3)
+  cron.schedule('0 3 * * *', () => {
     enviadosHoje.clear();
     const dataBrasil = obterDataBrasil();
-    console.log(`🔄 Registros de envios do dia anterior limpos. Data Brasil: ${dataBrasil.toLocaleDateString('pt-BR')}`);
-  }, {
-    timezone: "UTC" // Executa em UTC mas convertemos internamente
-  });
+    console.log(`🔄 Registros de envios limpos. Data Brasil: ${dataBrasil.toLocaleDateString('pt-BR')}`);
+  }, { timezone: "UTC" });
 
-  // Verificação a cada 20 minutos para preparar envios da próxima hora (HORÁRIO BRASIL)
   cron.schedule('*/20 * * * *', async () => {
     const horaBrasil = obterHoraBrasil();
     const diaBrasil = obterDiaBrasil();
     const dataBrasil = obterDataBrasil();
-    
-    console.log(`\n🔍 Verificando tokens e horários no banco... Hora Brasil: ${horaBrasil}h, Dia: ${diaBrasil}, Data: ${dataBrasil.toLocaleDateString('pt-BR')}`);
+    console.log(`\n🔍 Verificando tokens... Hora Brasil: ${horaBrasil}h, Dia: ${diaBrasil}, Data: ${dataBrasil.toLocaleDateString('pt-BR')}`);
     await verificarEPrepararEnvios(enviadosHoje);
   });
 
-  // Agendamento principal - executa no minuto 0 de cada hora (HORÁRIO BRASIL)
   cron.schedule('0 * * * *', async () => {
     const horaBrasil = obterHoraBrasil();
     const diaBrasil = obterDiaBrasil();
     const dataBrasil = obterDataBrasil();
-    
-    console.log(`\n🕐 Executando envios programados... Hora Brasil: ${horaBrasil}h, Dia: ${diaBrasil}, Data: ${dataBrasil.toLocaleDateString('pt-BR')}`);
+    console.log(`\n🕐 Executando envios... Hora Brasil: ${horaBrasil}h, Dia: ${diaBrasil}, Data: ${dataBrasil.toLocaleDateString('pt-BR')}`);
     await executarEnviosProgramados(enviadosHoje);
   });
 }
 
-// Função que verifica tokens no banco e prepara envios
 async function verificarEPrepararEnvios(enviadosHoje) {
   try {
-    // Usar horário do Brasil
     const horaBrasil = obterHoraBrasil();
     const diaBrasil = obterDiaBrasil();
     const proximaHora = (horaBrasil + 1) % 24;
     
-    // Não preparar aos domingos
     if (diaBrasil === 0) {
-      console.log('⛔ Domingo (Brasil) - não há preparação de envios');
+      console.log('⛔ Domingo - sem preparação');
       return;
     }
 
-    console.log(`📋 Verificando horários para próxima hora Brasil: ${proximaHora}h (atual: ${horaBrasil}h)`);
-
-    // 1. Buscar todos os horários cadastrados
-    const response = await fetch('https://atentus.cloud/api/api.php/horarios', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer 123456abcdef',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+    const horariosData = await fetchWithCache(
+      'https://atentus.cloud/api/api.php/horarios',
+      {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer 123456abcdef','Content-Type': 'application/json','Accept': 'application/json' },
+        timeout: 15000
       },
-      timeout: 15000
-    });
+      cacheHorarios,
+      'horarios_global'
+    );
 
-    if (!response.ok) {
-      throw new Error(`Erro ao buscar horários: HTTP ${response.status}`);
-    }
-
-    const horariosData = await response.json();
-    console.log(`📊 ${horariosData.length} registros de horários encontrados`);
-
-    // 2. Filtrar tokens que têm envios na próxima hora (BRASIL)
     const tokensParaEnviar = horariosData.filter(item => {
       if (!item.TOKEN || !item.HORARIOS) return false;
-      
       const horarios = item.HORARIOS.split(',').map(h => parseInt(h.trim())).filter(h => !isNaN(h));
-      const temEnvioProximaHora = horarios.includes(proximaHora);
-      
-      if (temEnvioProximaHora) {
-        console.log(`✅ Token ${item.TOKEN} tem envio programado para ${proximaHora}h (Brasil)`);
-      }
-      
-      return temEnvioProximaHora;
+      return horarios.includes(proximaHora);
     });
 
-    if (tokensParaEnviar.length === 0) {
-      console.log(`ℹ️ Nenhum token com envios programados para ${proximaHora}h (Brasil)`);
-      return;
-    }
-
-    // 3. Para cada token, verificar se tem todos os recursos necessários
     for (const tokenData of tokensParaEnviar) {
       await prepararEnvioToken(tokenData.TOKEN, diaBrasil, proximaHora);
     }
 
   } catch (error) {
-    console.error('❌ Erro na verificação de envios:', error.message);
+    console.error('❌ Erro verificar envios:', error.message);
   }
 }
 
-// Prepara envio para um token específico
 async function prepararEnvioToken(token, dia, hora) {
   const uid = String(token);
-  
   try {
     console.log(`[${uid}] 🔧 Preparando envio para ${hora}h (Brasil), dia ${dia}`);
-
-    // 1. Verificar se tem imagem local para este token e dia
-    const temImagem = await verificarImagemLocal(uid, dia);
-    if (!temImagem) {
-      console.log(`[${uid}] ⚠️ Imagem não encontrada para o dia ${dia}`);
-      return;
-    }
-
-    // 2. Verificar se tem mensagem no banco para este token e dia
-    const temMensagem = await verificarMensagemToken(uid, dia);
-    if (!temMensagem) {
-      console.log(`[${uid}] ⚠️ Mensagem não encontrada para o dia ${dia}`);
-      return;
-    }
-
-    // 3. Verificar se tem grupos cadastrados para este token
-    const temGrupos = await verificarGruposToken(uid);
-    if (!temGrupos) {
-      console.log(`[${uid}] ⚠️ Nenhum grupo cadastrado`);
-      return;
-    }
-
-    console.log(`[${uid}] ✅ Token preparado - tem imagem, mensagem e grupos`);
-
-    // 4. Verificar/inicializar cliente se necessário
+    if (!await verificarImagemLocal(uid, dia)) return;
+    if (!await verificarMensagemToken(uid, dia)) return;
+    if (!await verificarGruposToken(uid)) return;
+    console.log(`[${uid}] ✅ Token preparado`);
     await garantirClientePronto(uid);
-
   } catch (error) {
     console.error(`[${uid}] ❌ Erro ao preparar envio:`, error.message);
   }
 }
 
-// Função que executa os envios na hora certa
 async function executarEnviosProgramados(enviadosHoje) {
   try {
-    // Usar horário do Brasil
     const horaBrasil = obterHoraBrasil();
     const diaBrasil = obterDiaBrasil();
     const dataBrasil = obterDataBrasil();
-    
-    // Não executar aos domingos
     if (diaBrasil === 0) {
-      console.log('⛔ Domingo (Brasil) - nenhum envio será executado');
+      console.log('⛔ Domingo - sem envios');
       return;
     }
 
-    console.log(`📤 Executando envios programados para ${horaBrasil}h (Brasil), dia ${diaBrasil}, data: ${dataBrasil.toLocaleDateString('pt-BR')}`);
-
-    // 1. Buscar horários que devem ser executados agora (consulta atual para captar mudanças)
-    const response = await fetch('https://atentus.cloud/api/api.php/horarios', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer 123456abcdef',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+    const horariosData = await fetchWithCache(
+      'https://atentus.cloud/api/api.php/horarios',
+      {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer 123456abcdef','Content-Type': 'application/json','Accept': 'application/json' },
+        timeout: 15000
       },
-      timeout: 15000
-    });
+      cacheHorarios,
+      'horarios_global'
+    );
 
-    if (!response.ok) {
-      throw new Error(`Erro ao buscar horários: HTTP ${response.status}`);
-    }
-
-    const horariosData = await response.json();
-
-    // 2. Filtrar tokens para envio nesta hora (BRASIL)
     const tokensParaEnviarAgora = horariosData.filter(item => {
       if (!item.TOKEN || !item.HORARIOS) return false;
-      
       const horarios = item.HORARIOS.split(',').map(h => parseInt(h.trim())).filter(h => !isNaN(h));
       return horarios.includes(horaBrasil);
     });
 
-    console.log(`🎯 ${tokensParaEnviarAgora.length} tokens para envio nesta hora (${horaBrasil}h Brasil)`);
-
-    // 3. Executar envios para cada token
     for (const tokenData of tokensParaEnviarAgora) {
       await executarEnvioToken(tokenData.TOKEN, diaBrasil, horaBrasil, enviadosHoje);
-      
-      // Delay entre tokens diferentes para não sobrecarregar
       if (tokensParaEnviarAgora.length > 1) {
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log(`[GLOBAL] ⏱️ Delay 5s entre tokens...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
     }
 
   } catch (error) {
-    console.error('❌ Erro na execução de envios:', error.message);
+    console.error('❌ Erro execução envios:', error.message);
   }
 }
 
-// Executa envio para um token específico
 async function executarEnvioToken(token, dia, hora, enviadosHoje) {
   const uid = String(token);
-  
   try {
-    // Controle de envios por token
-    if (!enviadosHoje.has(uid)) {
-      enviadosHoje.set(uid, new Set());
-    }
+    if (!enviadosHoje.has(uid)) enviadosHoje.set(uid, new Set());
     const enviadosToken = enviadosHoje.get(uid);
-
     const chaveEnvio = `${dia}-${hora}`;
-    if (enviadosToken.has(chaveEnvio)) {
-      console.log(`[${uid}] 📝 Já enviado neste horário (${hora}h Brasil). Ignorando...`);
-      return;
-    }
+    if (enviadosToken.has(chaveEnvio)) return;
 
     console.log(`[${uid}] 🚀 Executando envio para dia ${dia}, hora ${hora}h (Brasil)`);
-
-    // 1. Buscar mensagem
     const mensagem = await buscarMensagemToken(uid, dia);
-    if (!mensagem) {
-      console.log(`[${uid}] ❌ Mensagem não encontrada`);
-      return;
-    }
-
-    // 2. Buscar grupos
     const grupos = await buscarGruposToken(uid);
-    if (!grupos || grupos.length === 0) {
-      console.log(`[${uid}] ❌ Grupos não encontrados`);
-      return;
-    }
-
-    // 3. Buscar imagem
     const media = await buscarImagemLocal(uid, dia);
-    if (!media) {
-      console.log(`[${uid}] ❌ Imagem não encontrada`);
-      return;
-    }
-
-    // 4. Obter ou inicializar cliente
     const client = await obterClientePronto(uid);
-    if (!client) {
-      console.log(`[${uid}] ❌ Cliente não disponível`);
-      return;
-    }
 
-    // 5. Executar envios
-    console.log(`[${uid}] 📨 Enviando para ${grupos.length} grupos...`);
+    if (!mensagem || !grupos.length || !media || !client) return;
+
     await realizarEnviosToken(uid, client, grupos, media, mensagem);
-
-    // 6. Marcar como enviado
     enviadosToken.add(chaveEnvio);
-    console.log(`[${uid}] ✅ Envios concluídos e marcados: ${chaveEnvio} (${hora}h Brasil)`);
-
+    console.log(`[${uid}] ✅ Envios concluídos: ${chaveEnvio}`);
   } catch (error) {
-    console.error(`[${uid}] ❌ Erro na execução do envio:`, error.message);
+    console.error(`[${uid}] ❌ Erro no envio:`, error.message);
   }
 }
 
-// ====== FUNÇÕES AUXILIARES ======
-
-async function verificarImagemLocal(token, dia) {
-  try {
-    const nomeImagem = imagemMap[dia]; // diaum, diadois, etc.
-    if (!nomeImagem) return false;
-
-    const exts = ['jpg', 'png'];
-    for (const ext of exts) {
-      const caminho = path.join(__dirname, 'assets', token, `${nomeImagem}.${ext}`);
-      if (fs.existsSync(caminho)) {
-        console.log(`[${token}] 🖼️ Imagem encontrada: ${nomeImagem}.${ext}`);
-        return true;
-      }
-    }
-    
-    return false;
-  } catch (error) {
-    console.error(`[${token}] Erro ao verificar imagem:`, error.message);
-    return false;
-  }
-}
+// ====== FUNÇÕES AUXILIARES COM CACHE ======
 
 async function verificarMensagemToken(token, dia) {
   try {
-    const response = await fetch('https://atentus.cloud/api/api.php/messagem', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer 123456abcdef',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      timeout: 10000
-    });
-
-    if (!response.ok) return false;
-
-    const dados = await response.json();
-    const mensagemToken = dados.find(m => 
-      m.TOKEN?.toString() === token.toString() && 
-      m.DIA?.toLowerCase() === diaMap[dia]?.toLowerCase()
+    const dados = await fetchWithCache(
+      'https://atentus.cloud/api/api.php/messagem',
+      { method: 'GET', headers: { 'Authorization': 'Bearer 123456abcdef','Content-Type': 'application/json','Accept': 'application/json' }, timeout: 10000 },
+      cacheMensagem,
+      'mensagem_global'
     );
-
+    const mensagemToken = dados.find(m => m.TOKEN?.toString() === token.toString() && m.DIA?.toLowerCase() === diaMap[dia]?.toLowerCase());
     return !!mensagemToken?.MESSAGE;
   } catch (error) {
-    console.error(`[${token}] Erro ao verificar mensagem:`, error.message);
-    return false;
-  }
-}
-
-async function verificarGruposToken(token) {
-  try {
-    const response = await fetch('https://atentus.cloud/api/api.php/gruposcheck', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer 123456abcdef',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      timeout: 10000
-    });
-
-    if (!response.ok) return false;
-
-    const dados = await response.json();
-    const gruposToken = dados.filter(g => g.TOKEN?.toString() === token.toString());
-
-    return gruposToken.length > 0;
-  } catch (error) {
-    console.error(`[${token}] Erro ao verificar grupos:`, error.message);
+    console.error(`[${token}] Erro verificar mensagem:`, error.message);
     return false;
   }
 }
 
 async function buscarMensagemToken(token, dia) {
   try {
-    const response = await fetch('https://atentus.cloud/api/api.php/messagem', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer 123456abcdef',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      timeout: 10000
-    });
-
-    if (!response.ok) return null;
-
-    const dados = await response.json();
-    const mensagemToken = dados.find(m => 
-      m.TOKEN?.toString() === token.toString() && 
-      m.DIA?.toLowerCase() === diaMap[dia]?.toLowerCase()
+    const dados = await fetchWithCache(
+      'https://atentus.cloud/api/api.php/messagem',
+      { method: 'GET', headers: { 'Authorization': 'Bearer 123456abcdef','Content-Type': 'application/json','Accept': 'application/json' }, timeout: 10000 },
+      cacheMensagem,
+      'mensagem_global'
     );
-
+    const mensagemToken = dados.find(m => m.TOKEN?.toString() === token.toString() && m.DIA?.toLowerCase() === diaMap[dia]?.toLowerCase());
     return mensagemToken?.MESSAGE?.replace(/\\n/g, '\n') || null;
   } catch (error) {
-    console.error(`[${token}] Erro ao buscar mensagem:`, error.message);
+    console.error(`[${token}] Erro buscar mensagem:`, error.message);
     return null;
+  }
+}
+
+async function verificarGruposToken(token) {
+  try {
+    const dados = await fetchWithCache(
+      'https://atentus.cloud/api/api.php/gruposcheck',
+      { method: 'GET', headers: { 'Authorization': 'Bearer 123456abcdef','Content-Type': 'application/json','Accept': 'application/json' }, timeout: 10000 },
+      cacheGrupos,
+      'grupos_global'
+    );
+    const gruposToken = dados.filter(g => g.TOKEN?.toString() === token.toString());
+    return gruposToken.length > 0;
+  } catch (error) {
+    console.error(`[${token}] Erro verificar grupos:`, error.message);
+    return false;
   }
 }
 
 async function buscarGruposToken(token) {
   try {
-    const response = await fetch('https://atentus.cloud/api/api.php/gruposcheck', {
-      method: 'GET',
-      headers: {
-        'Authorization': 'Bearer 123456abcdef',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      timeout: 10000
-    });
-
-    if (!response.ok) return [];
-
-    const dados = await response.json();
-    const gruposToken = dados.filter(g => g.TOKEN?.toString() === token.toString());
-
-    return gruposToken.map(g => ({
-      id: g.ID_GROUP,
-      nome: g.NOME || 'Nome não disponível'
-    }));
+    const dados = await fetchWithCache(
+      'https://atentus.cloud/api/api.php/gruposcheck',
+      { method: 'GET', headers: { 'Authorization': 'Bearer 123456abcdef','Content-Type': 'application/json','Accept': 'application/json' }, timeout: 10000 },
+      cacheGrupos,
+      'grupos_global'
+    );
+    return dados.filter(g => g.TOKEN?.toString() === token.toString()).map(g => ({ id: g.ID_GROUP, nome: g.NOME || 'Nome não disponível' }));
   } catch (error) {
-    console.error(`[${token}] Erro ao buscar grupos:`, error.message);
+    console.error(`[${token}] Erro buscar grupos:`, error.message);
     return [];
   }
 }
-
 async function buscarImagemLocal(token, dia) {
   try {
     const nomeImagem = imagemMap[dia];
     if (!nomeImagem) return null;
-
     const exts = ['jpg', 'png'];
     for (const ext of exts) {
       const caminho = path.join(__dirname, 'assets', token, `${nomeImagem}.${ext}`);
-      if (fs.existsSync(caminho)) {
-        return MessageMedia.fromFilePath(caminho);
-      }
+      if (fs.existsSync(caminho)) return MessageMedia.fromFilePath(caminho);
     }
-    
     return null;
   } catch (error) {
     console.error(`[${token}] Erro ao buscar imagem:`, error.message);
@@ -893,23 +737,16 @@ async function buscarImagemLocal(token, dia) {
 
 async function garantirClientePronto(token) {
   const uid = String(token);
-  
   try {
-    // Verificar se cliente já existe em memória e está conectado
     const clienteExistente = clients.get(uid);
     const estadoExistente = clientStates.get(uid);
-
     if (clienteExistente && !clienteExistente.destroyed && estadoExistente?.connected) {
       console.log(`[${uid}] ✅ Cliente já está pronto`);
       return;
     }
-
     console.log(`[${uid}] 🔄 Inicializando cliente...`);
     await startClient(uid, clients, clientStates);
-    
-    // Aguardar um pouco para estabilizar
     await new Promise(resolve => setTimeout(resolve, 2000));
-    
   } catch (error) {
     console.error(`[${uid}] ❌ Erro ao garantir cliente:`, error.message);
   }
@@ -917,47 +754,32 @@ async function garantirClientePronto(token) {
 
 async function obterClientePronto(token) {
   const uid = String(token);
-  
   try {
     let client = clients.get(uid);
     let estado = clientStates.get(uid);
-
-    // Se não existe ou está destruído, tentar inicializar
     if (!client || client.destroyed || !estado?.connected) {
       console.log(`[${uid}] 🔄 Cliente não pronto, inicializando...`);
       await startClient(uid, clients, clientStates);
-      
-      // Aguardar estabilização
       let tentativas = 0;
-      while (tentativas < 30) { // 30 tentativas de 2s = 1 minuto
+      while (tentativas < 30) {
         await new Promise(resolve => setTimeout(resolve, 2000));
-        
         client = clients.get(uid);
         estado = clientStates.get(uid);
-        
         if (client && !client.destroyed && estado?.connected) {
           console.log(`[${uid}] ✅ Cliente pronto após ${tentativas * 2}s`);
           break;
         }
-        
         tentativas++;
       }
     }
-
-    // Verificar estado final
     if (client && !client.destroyed && estado?.connected) {
       try {
         const whatsappState = await client.getState();
-        if (whatsappState === 'CONNECTED') {
-          return client;
-        } else {
-          console.log(`[${uid}] ⚠️ Estado WhatsApp: ${whatsappState}`);
-        }
+        if (whatsappState === 'CONNECTED') return client;
       } catch (error) {
         console.log(`[${uid}] ⚠️ Erro ao verificar estado WhatsApp: ${error.message}`);
       }
     }
-
     return null;
   } catch (error) {
     console.error(`[${uid}] ❌ Erro ao obter cliente:`, error.message);
@@ -967,19 +789,14 @@ async function obterClientePronto(token) {
 
 async function realizarEnviosToken(token, client, grupos, media, mensagem) {
   const uid = String(token);
-  
   const salvarHistorico = async (dados) => {
     try {
       const caminhoArquivo = path.join(__dirname, `historico-envios-${uid}.json`);
       let historicoEnvios = [];
-      
       try {
         const arquivoExistente = await fsPromises.readFile(caminhoArquivo, 'utf8');
         historicoEnvios = JSON.parse(arquivoExistente);
-      } catch {
-        historicoEnvios = [];
-      }
-      
+      } catch { historicoEnvios = []; }
       historicoEnvios.push(dados);
       await fsPromises.writeFile(caminhoArquivo, JSON.stringify(historicoEnvios, null, 2));
     } catch (erro) {
@@ -991,33 +808,23 @@ async function realizarEnviosToken(token, client, grupos, media, mensagem) {
 
   for (let i = 0; i < grupos.length; i++) {
     const grupo = grupos[i];
-    
-    // Usar horário do Brasil para o histórico
     const inicioEnvioBrasil = obterDataBrasil();
     const horaMsg = inicioEnvioBrasil.toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const dataMsg = inicioEnvioBrasil.toLocaleDateString('pt-BR');
 
     try {
       console.log(`[${uid}] ⏳ Enviando para grupo ${i+1}/${grupos.length}: ${grupo.nome || grupo.id}`);
-      
-      // Verificar estado do cliente antes de enviar
       const state = await client.getState();
-      if (state !== 'CONNECTED') {
-        throw new Error(`Cliente desconectado (${state})`);
-      }
-
-      // Obter informações do chat
+      if (state !== 'CONNECTED') throw new Error(`Cliente desconectado (${state})`);
       const chat = await client.getChatById(grupo.id);
       const nomeGrupo = chat.name || grupo.nome || 'Nome não disponível';
 
-      // Enviar mensagem com timeout
       await Promise.race([
         client.sendMessage(grupo.id, media, { caption: mensagem }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout no envio')), 30000))
       ]);
 
       console.log(`[${uid}] ✅ Sucesso: ${nomeGrupo}`);
-      
       await salvarHistorico({
         id: Date.now() + Math.random(),
         grupoId: grupo.id,
@@ -1032,7 +839,6 @@ async function realizarEnviosToken(token, client, grupos, media, mensagem) {
 
     } catch (erroEnvio) {
       console.error(`[${uid}] ❌ Erro ao enviar para ${grupo.id}: ${erroEnvio.message}`);
-      
       await salvarHistorico({
         id: Date.now() + Math.random(),
         grupoId: grupo.id,
@@ -1047,23 +853,20 @@ async function realizarEnviosToken(token, client, grupos, media, mensagem) {
       });
     }
 
-    // Delay entre envios (exceto no último)
     if (i < grupos.length - 1) {
-      console.log(`[${uid}] ⏱️ Delay 2s...`);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log(`[${uid}] ⏱️ Delay 5s...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
   }
 
   console.log(`[${uid}] 🎉 Envios concluídos`);
 }
 
-// Função para debug - mostrar diferença de horários
 function mostrarInfoTimezone() {
   const agora = new Date();
   const horaUTC = agora.getUTCHours();
   const horaBrasil = obterHoraBrasil();
   const dataBrasil = obterDataBrasil();
-  
   console.log('⏰ DEBUG TIMEZONE:');
   console.log(`   UTC: ${horaUTC}h`);
   console.log(`   Brasil: ${horaBrasil}h`);
@@ -1072,211 +875,8 @@ function mostrarInfoTimezone() {
 }
 
 //*****FIM AGENDAR ENVIOS NOVO COM TIMEZONE *****
-/*
-//Agendar envios anterior
-function agendarEnvios() {
-  console.log('📅 Função de agendamento registrada');
-  const enviosFilePath = path.join(__dirname, 'envios_registrados.txt');
-  let enviadosHoje = new Set();
 
-  // Carregar envios já realizados
-  if (fs.existsSync(enviosFilePath)) {
-    const content = fs.readFileSync(enviosFilePath, 'utf-8');
-    content.split('\n').filter(Boolean).forEach(line => enviadosHoje.add(line));
-    console.log('📌 Envios já registrados carregados:', Array.from(enviadosHoje));
-  }
 
-  // Agendamento para limpar registros à meia-noite
-  cron.schedule('0 0 * * *', () => {
-    enviadosHoje.clear();
-    if (fs.existsSync(enviosFilePath)) {
-      fs.unlinkSync(enviosFilePath);
-    }
-    console.log('🔄 Registros de envios do dia anterior limpos.');
-  });
-
-  // Agendamento principal
-  cron.schedule('0 * * * *', async () => {
-    console.log('\n🕒 Agendamento ativado! Verificando envios...');
-    console.log('📌 Envios já realizados hoje:', Array.from(enviadosHoje));
-    
-    const agora = new Date();
-    const hora = agora.getHours();
-    
-    function diaSemana() {
-      let day = agora.getDay();
-      if (hora >= 0 && hora <= 1) {
-        day = day - 1;
-        if (day < 0) day = 6;
-      }
-      return day;
-    }
-    
-    const dia = diaSemana();
-    console.log(`📆 Data/hora atual: ${agora.toLocaleString()}`);
-    console.log(`📆 Dia da semana: ${dia} (0=Domingo) | Hora atual: ${hora}`);
-
-    if (dia === 0) {
-      console.log('⛔ Domingo. Nenhum envio será feito.');
-      return;
-    }
-
-    const horarios = lerHorarios();
-    console.log('📂 Horários cadastrados:', horarios);
-
-    if (!horarios.includes(hora)) {
-      console.log(`⏱️ Hora ${hora} não está nos horários programados.`);
-      return;
-    }
-
-    const chaveEnvio = `${dia}-${hora}`;
-    if (enviadosHoje.has(chaveEnvio)) {
-      console.log('🔁 Já enviado neste horário. Ignorando...');
-      return;
-    }
-
-    const nomeImagemBase = imagemMap[dia];
-    const nomeMensagem = diaMap[dia];
-
-    if (!nomeImagemBase || !nomeMensagem) {
-      console.log('⚠️ Dia não mapeado corretamente:', dia);
-      return;
-    }
-
-    const mensagemMap = lerMensagensDataTxt();
-    console.log('📜 Mapa de mensagens:', Object.keys(mensagemMap));
-
-    const texto = mensagemMap[nomeMensagem];
-    console.log(`📄 Texto para ${nomeMensagem}:`, texto.substring(0, 50) + '...');
-
-    const exts = ['.jpg', '.png'];
-    let caminhoImagem = null;
-    let imagemExt = '';
-
-    for (const ext of exts) {
-      const tentativa = path.join(assetsDir, `${nomeImagemBase}${ext}`);
-      if (fs.existsSync(tentativa)) {
-        caminhoImagem = tentativa;
-        imagemExt = ext;
-        break;
-      }
-    }
-
-    if (!caminhoImagem) {
-      console.log(`🖼️ Imagem não encontrada para ${nomeImagemBase}`);
-    } else {
-      console.log(`🖼️ Imagem encontrada: ${caminhoImagem}`);
-    }
-
-    if (!caminhoImagem || !texto) {
-      console.log(`⚠️ Conteúdo incompleto para ${nomeMensagem.toUpperCase()}. Imagem ou texto ausente.`);
-      return;
-    }
-
-    try {
-      const media = MessageMedia.fromFilePath(caminhoImagem);
-      const grupos = lerGruposDestinatarios();
-      
-      if (grupos.length === 0) {
-        console.log('⚠️ Nenhum grupo destinatário configurado.');
-        return;
-      }
-      
-      console.log(`📣 Preparando envio para ${grupos.length} grupos com intervalo de 2 segundos...`);
-      const now = new Date();
-      now.setHours(now.getHours() - 3);
-      const horaMsg = now.toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-      const dataMsg = now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-
-      let historicoEnvios = [];
-
-      // Função para salvar o histórico - CORRIGIDA
-      const salvarHistorico = async (dados) => {
-        try {
-          const caminhoArquivo = path.join(__dirname, 'historico-envios.json');
-      
-          // Carregar histórico existente
-          try {
-            const arquivoExistente = await fsPromises.readFile(caminhoArquivo, 'utf8');
-            historicoEnvios = JSON.parse(arquivoExistente);
-          } catch {
-            // Arquivo não existe ainda, começar com array vazio
-            historicoEnvios = [];
-          }
-          
-          // Adicionar novo registro
-          historicoEnvios.push(dados);
-          
-          // Salvar de volta no arquivo
-          await fsPromises.writeFile(caminhoArquivo, JSON.stringify(historicoEnvios, null, 2));
-        } catch (erro) {
-          console.error('Erro ao salvar histórico:', erro);
-        }
-      };
-
-      // Função auxiliar para enviar com delay
-      const enviarComDelay = async (grupoId, index) => {
-        const inicioEnvio = new Date();
-        const horaMsg = inicioEnvio.toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-        const dataMsg = inicioEnvio.toLocaleDateString('pt-BR');
-        const chat = await client.getChatById(grupoId);
-        const nomeGrupo = chat.name;
-        try {
-          console.log(`\n⏳ Enviando para grupo ${index + 1}/${grupos.length}: ${grupoId}`);
-          await client.sendMessage(grupoId, media, { caption: texto });
-          console.log(`✅ Mensagem enviada com sucesso para ${nomeGrupo} em ${horaMsg} (${dataMsg})`);
-          
-          // Registrar sucesso
-          await salvarHistorico({
-            id: Date.now() + Math.random(), // ID único
-            grupoId,
-            status: 'sucesso',
-            hora: horaMsg,
-            data: dataMsg,
-            nome: nomeGrupo,
-            timestamp: inicioEnvio.toISOString(),
-            posicao: `${index + 1}/${grupos.length}`,
-            mensagem: `Mensagem enviada com sucesso para<br>${nomeGrupo}`
-          });
-
-          // Aguardar 2 segundos, exceto após o último envio
-          if (index < grupos.length - 1) {
-            console.log('⏱️ Aguardando 2 segundos antes do próximo envio...');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          }
-        } catch (erroEnvio) {
-          console.error(`❌ Erro ao enviar para${grupoId}:`, erroEnvio.message);
-
-          await salvarHistorico({
-            id: Date.now() + Math.random(),
-            grupoId,
-            status: 'erro',
-            hora: horaMsg,
-            data: dataMsg,
-            nome: nomeGrupo,
-            timestamp: inicioEnvio.toISOString(),
-            posicao: `${index + 1}/${grupos.length}`,
-            mensagem: `Erro ao enviar para<br>${nomeGrupo}:<br>${erroEnvio.message}`,
-            erro: erroEnvio.message
-          });
-        }
-      };
-
-      // Processar envios em série com delay
-      for (let i = 0; i < grupos.length; i++) {
-        await enviarComDelay(grupos[i], i);
-      }
-
-      // Registrar envio somente após todos os grupos serem processados
-      enviadosHoje.add(chaveEnvio);
-      fs.appendFileSync(enviosFilePath, chaveEnvio + '\n', 'utf-8');
-      console.log(`\n📝 Todos os envios concluídos. Registrado: ${chaveEnvio}`);
-    } catch (erroGeral) {
-      console.error(`❌ Erro no processo de envio para ${nomeMensagem}:`, erroGeral.message);
-    }
-  });
-}
-*/
 
 // ROTAS ==================================================
 
@@ -3476,6 +3076,22 @@ async function iniciarServidor() {
     process.exit(1);
   }
 }
+
+// ==============================
+// Monitor simples de saúde (CPU / Memória)
+// ==============================
+setInterval(() => {
+  const mem = process.memoryUsage();
+  const cpuLoad = process.cpuUsage();
+
+  console.log("📊 Monitor de Recursos:");
+  console.log(`   Memória RSS: ${Math.round(mem.rss / 1024 / 1024)} MB`);
+  console.log(`   Heap usado: ${Math.round(mem.heapUsed / 1024 / 1024)} MB`);
+  console.log(`   Heap total: ${Math.round(mem.heapTotal / 1024 / 1024)} MB`);
+  console.log(`   CPU user: ${(cpuLoad.user / 1000000).toFixed(2)}s`);
+  console.log(`   CPU system: ${(cpuLoad.system / 1000000).toFixed(2)}s`);
+}, 60000); // a cada 60s
+
 
 // Chamar a função em vez de app.listen direto
 iniciarServidor();
